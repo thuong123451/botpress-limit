@@ -3,8 +3,12 @@ import { initializeApp, cert } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { Buffer } from 'buffer';
 
-const serviceAccount = JSON.parse(atob(YOUR_SECRET_FIREBASE_KEY));
+// Giải mã FIREBASE_KEY_BASE64 từ env
+const serviceAccount = JSON.parse(
+  Buffer.from(FIREBASE_KEY_BASE64, "base64").toString("utf-8")
+);
 
+// Khởi tạo Firebase
 initializeApp({
   credential: cert(serviceAccount)
 });
@@ -15,7 +19,7 @@ const RESET_HOUR_VN = 8;
 
 const getTodayKey = () => {
   const now = new Date();
-  const vnOffset = -7; // VN is UTC+7 → offset = -7 from UTC
+  const vnOffset = -7; // UTC+7
   now.setUTCHours(now.getUTCHours() + vnOffset);
 
   if (now.getHours() < RESET_HOUR_VN) {
