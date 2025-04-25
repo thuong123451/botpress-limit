@@ -1,9 +1,0 @@
-{
-  "name": "cf-worker-limit-ip",
-  "version": "1.0.0",
-  "main": "index.js",
-  "type": "module",
-  "dependencies": {
-    "firebase-admin": "^11.10.1"
-  }
-}
