@@ -1,9 +1,6 @@
 export default {
   async fetch(request, env, ctx) {
-    const ip = new URL(request.url).searchParams.get("ip") || 
-               request.headers.get("cf-connecting-ip") || 
-               request.headers.get("x-forwarded-for") || 
-               "unknown";
+    const ip = new URL(request.url).searchParams.get("ip") || request.headers.get("cf-connecting-ip") || "unknown";
 
     const now = new Date();
     if (now.getHours() < 8) now.setDate(now.getDate() - 1);
@@ -13,7 +10,7 @@ export default {
     const serviceAccount = {
       "type": "service_account",
       "project_id": "thuong-66f3b",
-      "private_key_id": "f344e2691849a1c40406f25ebf5f5c70be0f79fd", // ✅ Đã thay
+     "private_key_id": "f344e2691849a1c40406f25ebf5f5c70be0f79fd", // ✅ Đã thay
       "private_key": `-----BEGIN PRIVATE KEY-----
 MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCrlOH8pNc2wXkx
 ZlSlGZCS4hazpbBPrXmpQN4AqPqu1jtH4ok+KcfXxAxW4UjU0GuxBz5NLk644VlX
@@ -60,17 +57,17 @@ o3EIleaKCEbXfvWhpKh6zRo=
     });
     const { access_token } = await tokenRes.json();
 
-    let count = 0;
-
-    const getRes = await fetch(`https://firestore.googleapis.com/v1/projects/${serviceAccount.project_id}/databases/(default)/documents/${docPath}`, {
+    const docUrl = `https://firestore.googleapis.com/v1/projects/${serviceAccount.project_id}/databases/(default)/documents/${docPath}`;
+    const getRes = await fetch(docUrl, {
       headers: { Authorization: `Bearer ${access_token}` }
     });
 
+    let count = 0;
     if (getRes.ok) {
       const data = await getRes.json();
       count = parseInt(data.fields?.count?.integerValue || "0");
     } else if (getRes.status === 404) {
-      // Document chưa tồn tại → count = 0
+      // Document chưa tồn tại, tạo mới sau
       count = 0;
     } else {
       return new Response("Error reading Firestore", { status: 500 });
@@ -80,13 +77,13 @@ o3EIleaKCEbXfvWhpKh6zRo=
       return new Response("Quota exceeded", { status: 403 });
     }
 
-    const writeMethod = count === 0 ? "POST" : "PATCH";
-    const writeUrl = count === 0
-      ? `https://firestore.googleapis.com/v1/projects/${serviceAccount.project_id}/databases/(default)/documents/ip-limits?documentId=${ip}_${today}`
-      : `https://firestore.googleapis.com/v1/projects/${serviceAccount.project_id}/databases/(default)/documents/${docPath}?updateMask.fieldPaths=count`;
+    const patchMethod = count === 0 ? "POST" : "PATCH";
+    const patchUrl = count === 0 ? 
+      `https://firestore.googleapis.com/v1/projects/${serviceAccount.project_id}/databases/(default)/documents/ip-limits?documentId=${ip}_${today}` 
+      : docUrl + "?updateMask.fieldPaths=count";
 
-    const saveRes = await fetch(writeUrl, {
-      method: writeMethod,
+    await fetch(patchUrl, {
+      method: patchMethod,
       headers: {
         Authorization: `Bearer ${access_token}`,
         "Content-Type": "application/json"
@@ -98,17 +95,15 @@ o3EIleaKCEbXfvWhpKh6zRo=
       })
     });
 
-    if (!saveRes.ok) {
-      return new Response("Error saving to Firestore", { status: 500 });
-    }
-
-    return new Response(`Allowed (${count + 1})`, { status: 200 });
+    return new Response("Allowed", { status: 200 });
   }
 };
 
-// JWT ký tay
 async function createJWT(sa) {
-  const header = { alg: "RS256", typ: "JWT" };
+  const header = {
+    alg: "RS256",
+    typ: "JWT"
+  };
   const now = Math.floor(Date.now() / 1000);
   const payload = {
     iss: sa.client_email,
@@ -117,7 +112,6 @@ async function createJWT(sa) {
     exp: now + 3600,
     iat: now
   };
-
   const encoder = new TextEncoder();
   const jwtData = `${btoa(JSON.stringify(header))}.${btoa(JSON.stringify(payload))}`;
   const keyData = await crypto.subtle.importKey(
