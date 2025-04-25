@@ -1,17 +1,22 @@
 export default {
   async fetch(request, env, ctx) {
-    const ip = new URL(request.url).searchParams.get("ip") || request.headers.get("cf-connecting-ip") || "unknown";
+    const url = new URL(request.url);
+    const ip = url.searchParams.get("ip") || request.headers.get("cf-connecting-ip") || "unknown";
+    const isp = request.headers.get("cf-isp") || "unknown-isp";
 
+    // Giờ Việt Nam
     const now = new Date();
-    if (now.getHours() < 8) now.setDate(now.getDate() - 1);
-    const today = now.toISOString().slice(0, 10);
-    const docId = `${ip}_${today}`;
+    if (now.getUTCHours() + 7 < 8) now.setUTCDate(now.getUTCDate() - 1);
+    const vnDate = new Date(now.getTime() + 7 * 60 * 60 * 1000);
+    const today = vnDate.toISOString().slice(0, 10);
+    const docId = `${ip}_${isp}_${today}`;
     const docPath = `ip-limits/${docId}`;
 
+    // Service Account từ Firebase
     const serviceAccount = {
       "type": "service_account",
       "project_id": "thuong-66f3b",
-     "private_key_id": "f344e2691849a1c40406f25ebf5f5c70be0f79fd", // ✅ Đã thay
+      "private_key_id": "f344e2691849a1c40406f25ebf5f5c70be0f79fd", // ✅ Đã thay
       "private_key": `-----BEGIN PRIVATE KEY-----
 MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCrlOH8pNc2wXkx
 ZlSlGZCS4hazpbBPrXmpQN4AqPqu1jtH4ok+KcfXxAxW4UjU0GuxBz5NLk644VlX
@@ -39,7 +44,7 @@ jf5oOIaqphBcw5CGwwuNoV4fKXaPd3Z4+Pl70lUCgYEAxORLUnBKuRGkNFHH84fX
 Q5jbTVyQzTAbhIXNFlEn6FtrnI81n2NrXh0ICSd/Y02ZlcW/QFYOdKU3scM7xJHg
 yFDvpoL9uEFHyxyyMci8m684wrcasOixneloc+SaRpIxjtZl8fqITMfP+5p3W2Ad
 o3EIleaKCEbXfvWhpKh6zRo=
------END PRIVATE KEY-----\n`,
+-----END PRIVATE KEY-----\n`, // <-- Rút gọn vì đã cung cấp bên trên
       "client_email": "firebase-adminsdk-fbsvc@thuong-66f3b.iam.gserviceaccount.com",
       "client_id": "106897292427396741970",
       "auth_uri": "https://accounts.google.com/o/oauth2/auth",
@@ -63,11 +68,17 @@ o3EIleaKCEbXfvWhpKh6zRo=
     }
 
     if (count >= 5) {
-      return new Response("Quota exceeded", { status: 403 });
+      return new Response(JSON.stringify({ error: "Quota exceeded", ip, isp, count }), {
+        status: 429,
+        headers: {
+          "Content-Type": "application/json",
+          "X-Client-IP": ip,
+          "X-RateLimit-Remaining": "0"
+        }
+      });
     }
 
     if (docExists) {
-      // Update count
       await fetch(`https://firestore.googleapis.com/v1/projects/${serviceAccount.project_id}/databases/(default)/documents/${docPath}?updateMask.fieldPaths=count`, {
         method: "PATCH",
         headers: {
@@ -81,7 +92,6 @@ o3EIleaKCEbXfvWhpKh6zRo=
         })
       });
     } else {
-      // Create new document
       await fetch(`https://firestore.googleapis.com/v1/projects/${serviceAccount.project_id}/databases/(default)/documents/ip-limits?documentId=${docId}`, {
         method: "POST",
         headers: {
@@ -90,13 +100,34 @@ o3EIleaKCEbXfvWhpKh6zRo=
         },
         body: JSON.stringify({
           fields: {
-            count: { integerValue: "1" }
+            count: { integerValue: "1" },
+            ip: { stringValue: ip },
+            isp: { stringValue: isp }
           }
         })
       });
     }
 
-    return new Response("Allowed", { status: 200 });
+    // ✅ Nếu còn lượt → forward đến API gốc
+    const proxyUrl = "https://your-api.example.com/api/chat"; // ⚠️ Thay bằng API thật
+    const proxyRequest = new Request(proxyUrl, {
+      method: request.method,
+      headers: request.headers,
+      body: request.method !== "GET" && request.method !== "HEAD" ? await request.clone().arrayBuffer() : undefined,
+      redirect: "follow"
+    });
+
+    const response = await fetch(proxyRequest);
+
+    const resHeaders = new Headers(response.headers);
+    resHeaders.set("X-RateLimit-Remaining", (4 - count).toString());
+    resHeaders.set("X-Client-IP", ip);
+    resHeaders.set("X-Client-ISP", isp);
+
+    return new Response(response.body, {
+      status: response.status,
+      headers: resHeaders
+    });
   }
 };
 
@@ -109,10 +140,7 @@ async function getAccessToken(sa) {
     exp: iat + 3600,
     iat
   };
-  const header = {
-    alg: "RS256",
-    typ: "JWT"
-  };
+  const header = { alg: "RS256", typ: "JWT" };
   const encoder = new TextEncoder();
   const jwtData = `${btoa(JSON.stringify(header))}.${btoa(JSON.stringify(payload))}`;
   const keyData = await crypto.subtle.importKey(
