@@ -1,23 +1,8 @@
-name = "cf-firebase-proxy"
-type = "javascript"
-main = "src/index.js"
-compatibility_date = "2024-04-20"
+name = "cf-worker-firebase-limit"
+compatibility_date = "2024-04-25"
+node_compat = true
 
-[vars]
-FIREBASE_SERVICE_ACCOUNT = """{
-  "type": "service_account",
-  "project_id": "thuong-66f3b",
-  "private_key_id": "695c04c2d6b638b77e0dcd136f9b532e00497ef7",
-  "private_key": "-----BEGIN PRIVATE KEY-----\\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCrlOH8pNc2wXkx\\nZlSlGZCS4hazpbBPrXmpQN4AqPqu1jtH4ok+KcfXxAxW4UjU0GuxBz5NLk644VlX\\nXXVdRDkqk3+QMcRF0HuGqR9fpOmkn6xmULJdVe5LWi4/j1iy9xoCA6Sd53OTHExM\\n...\\n-----END PRIVATE KEY-----\\n",
-  "client_email": "firebase-adminsdk-fbsvc@thuong-66f3b.iam.gserviceaccount.com",
-  "client_id": "106897292427396741970",
-  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-  "token_uri": "https://oauth2.googleapis.com/token",
-  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/firebase-adminsdk-fbsvc%40thuong-66f3b.iam.gserviceaccount.com",
-  "universe_domain": "googleapis.com"
-}"""
-NODE_ENV = "production"
+main = "index.js"
 
-[env.production]
-workers_dev = true
+[build]
+command = "npm install"
