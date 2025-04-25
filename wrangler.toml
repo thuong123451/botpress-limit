@@ -1,9 +1,4 @@
-name = "ip-limit-worker"
+name = "botpress-limit"
 main = "index.js"
 compatibility_date = "2024-04-25"
-
-# Nếu bạn dùng Node.js API như `Buffer`, nên bật module:
 node_compat = true
-
-# Loại bỏ field `type` vì Wrangler cảnh báo "Unexpected fields"
-# Không cần [assets] nếu bạn không phục vụ file tĩnh từ thư mục
