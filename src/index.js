@@ -1,12 +1,4 @@
-import { getFirestore, collection, doc, getDoc, setDoc } from 'firebase-admin/firestore'
-import { initializeApp, applicationDefault } from 'firebase-admin/app'
-
-initializeApp({
-  credential: applicationDefault(),
-})
-
-const db = getFirestore()
-
+const FIREBASE_URL = 'https://firestore.googleapis.com/v1/projects/YOUR_PROJECT_ID/databases/(default)/documents'
 const LIMIT = 5
 
 export default {
@@ -19,40 +11,59 @@ export default {
     const resetTimestamp = new Date(now)
 
     if (currentHour >= 8) {
-      resetTimestamp.setUTCHours(1) // 8h sáng VN = 1h UTC
+      resetTimestamp.setUTCHours(1)
     } else {
-      resetTimestamp.setUTCHours(-23) // Trước 8h sáng -> lùi về hôm trước
+      resetTimestamp.setUTCHours(-23)
     }
+
     resetTimestamp.setUTCMinutes(0)
     resetTimestamp.setUTCSeconds(0)
     resetTimestamp.setUTCMilliseconds(0)
 
     const todayKey = resetTimestamp.toISOString().split('T')[0]
+    const docPath = `limits/${ip}`
 
-    const userRef = doc(collection(db, 'limits'), ip)
-    const userDoc = await getDoc(userRef)
+    const getRes = await fetch(`${FIREBASE_URL}/${docPath}`, {
+      headers: {
+        Authorization: `Bearer ${env.FIREBASE_TOKEN}`,
+      },
+    })
 
-    let data = {}
-    if (userDoc.exists()) {
-      data = userDoc.data() || {}
+    let data = {
+      fields: {
+        count: { integerValue: '0' },
+        todayKey: { stringValue: todayKey },
+      },
     }
 
-    if (!data.todayKey || data.todayKey !== todayKey) {
-      data.todayKey = todayKey
-      data.count = 0
+    if (getRes.ok) {
+      const json = await getRes.json()
+      const storedKey = json.fields?.todayKey?.stringValue || ''
+      const count = parseInt(json.fields?.count?.integerValue || '0', 10)
+
+      if (storedKey === todayKey) {
+        if (count >= LIMIT) {
+          return new Response(JSON.stringify({ allowed: false }), {
+            headers: { 'Content-Type': 'application/json' },
+          })
+        }
+
+        data.fields.count.integerValue = `${count + 1}`
+      }
     }
 
-    if (data.count >= LIMIT) {
-      return new Response(JSON.stringify({ allowed: false }), {
-        headers: { 'Content-Type': 'application/json' },
-      })
-    }
-
-    data.count += 1
-    await setDoc(userRef, data)
+    // Update document in Firestore
+    await fetch(`${FIREBASE_URL}/${docPath}?updateMask.fieldPaths=count&updateMask.fieldPaths=todayKey`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${env.FIREBASE_TOKEN}`,
+      },
+      body: JSON.stringify(data),
+    })
 
     return new Response(JSON.stringify({ allowed: true }), {
       headers: { 'Content-Type': 'application/json' },
     })
-  }
+  },
 }
