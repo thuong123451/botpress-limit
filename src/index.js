@@ -1,16 +1,18 @@
 export default {
   async fetch(request, env, ctx) {
-    const ip = request.headers.get("cf-connecting-ip") || request.headers.get("x-forwarded-for") || "unknown";
+    const ip = new URL(request.url).searchParams.get("ip") || 
+               request.headers.get("cf-connecting-ip") || 
+               request.headers.get("x-forwarded-for") || 
+               "unknown";
 
-    // Tính ngày reset sau 8h sáng
     const now = new Date();
     if (now.getHours() < 8) now.setDate(now.getDate() - 1);
     const today = now.toISOString().slice(0, 10);
     const docPath = `ip-limits/${ip}_${today}`;
 
     const serviceAccount = {
-      type: "service_account",
-      project_id: "thuong-66f3b",
+      "type": "service_account",
+      "project_id": "thuong-66f3b",
       "private_key_id": "f344e2691849a1c40406f25ebf5f5c70be0f79fd", // ✅ Đã thay
       "private_key": `-----BEGIN PRIVATE KEY-----
 MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCrlOH8pNc2wXkx
@@ -40,15 +42,14 @@ Q5jbTVyQzTAbhIXNFlEn6FtrnI81n2NrXh0ICSd/Y02ZlcW/QFYOdKU3scM7xJHg
 yFDvpoL9uEFHyxyyMci8m684wrcasOixneloc+SaRpIxjtZl8fqITMfP+5p3W2Ad
 o3EIleaKCEbXfvWhpKh6zRo=
 -----END PRIVATE KEY-----\n`,
-      client_email: "firebase-adminsdk-fbsvc@thuong-66f3b.iam.gserviceaccount.com",
-      client_id: "106897292427396741970",
-      auth_uri: "https://accounts.google.com/o/oauth2/auth",
-      token_uri: "https://oauth2.googleapis.com/token",
-      auth_provider_x509_cert_url: "https://www.googleapis.com/oauth2/v1/certs",
-      client_x509_cert_url: "https://www.googleapis.com/robot/v1/metadata/x509/firebase-adminsdk-fbsvc%40thuong-66f3b.iam.gserviceaccount.com"
+      "client_email": "firebase-adminsdk-fbsvc@thuong-66f3b.iam.gserviceaccount.com",
+      "client_id": "106897292427396741970",
+      "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+      "token_uri": "https://oauth2.googleapis.com/token",
+      "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+      "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/firebase-adminsdk-fbsvc%40thuong-66f3b.iam.gserviceaccount.com"
     };
 
-    // Lấy Access Token
     const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -59,8 +60,8 @@ o3EIleaKCEbXfvWhpKh6zRo=
     });
     const { access_token } = await tokenRes.json();
 
-    // Đọc lượt hiện tại
     let count = 0;
+
     const getRes = await fetch(`https://firestore.googleapis.com/v1/projects/${serviceAccount.project_id}/databases/(default)/documents/${docPath}`, {
       headers: { Authorization: `Bearer ${access_token}` }
     });
@@ -68,16 +69,24 @@ o3EIleaKCEbXfvWhpKh6zRo=
     if (getRes.ok) {
       const data = await getRes.json();
       count = parseInt(data.fields?.count?.integerValue || "0");
+    } else if (getRes.status === 404) {
+      // Document chưa tồn tại → count = 0
+      count = 0;
+    } else {
+      return new Response("Error reading Firestore", { status: 500 });
     }
 
-    // Nếu quá 5 lượt thì chặn
     if (count >= 5) {
       return new Response("Quota exceeded", { status: 403 });
     }
 
-    // Tăng count và ghi lại
-    await fetch(`https://firestore.googleapis.com/v1/projects/${serviceAccount.project_id}/databases/(default)/documents/${docPath}?mask.fieldPaths=count`, {
-      method: "PATCH",
+    const writeMethod = count === 0 ? "POST" : "PATCH";
+    const writeUrl = count === 0
+      ? `https://firestore.googleapis.com/v1/projects/${serviceAccount.project_id}/databases/(default)/documents/ip-limits?documentId=${ip}_${today}`
+      : `https://firestore.googleapis.com/v1/projects/${serviceAccount.project_id}/databases/(default)/documents/${docPath}?updateMask.fieldPaths=count`;
+
+    const saveRes = await fetch(writeUrl, {
+      method: writeMethod,
       headers: {
         Authorization: `Bearer ${access_token}`,
         "Content-Type": "application/json"
@@ -89,16 +98,17 @@ o3EIleaKCEbXfvWhpKh6zRo=
       })
     });
 
+    if (!saveRes.ok) {
+      return new Response("Error saving to Firestore", { status: 500 });
+    }
+
     return new Response(`Allowed (${count + 1})`, { status: 200 });
   }
 };
 
-// Tạo JWT để lấy Access Token
+// JWT ký tay
 async function createJWT(sa) {
-  const header = {
-    alg: "RS256",
-    typ: "JWT"
-  };
+  const header = { alg: "RS256", typ: "JWT" };
   const now = Math.floor(Date.now() / 1000);
   const payload = {
     iss: sa.client_email,
@@ -107,6 +117,7 @@ async function createJWT(sa) {
     exp: now + 3600,
     iat: now
   };
+
   const encoder = new TextEncoder();
   const jwtData = `${btoa(JSON.stringify(header))}.${btoa(JSON.stringify(payload))}`;
   const keyData = await crypto.subtle.importKey(
@@ -120,12 +131,8 @@ async function createJWT(sa) {
   return `${jwtData}.${btoa(String.fromCharCode(...new Uint8Array(sig)))}`;
 }
 
-// Chuyển PEM sang ArrayBuffer
 function pemToArrayBuffer(pem) {
-  const b64 = pem
-    .replace("-----BEGIN PRIVATE KEY-----", "")
-    .replace("-----END PRIVATE KEY-----", "")
-    .replace(/\n/g, "");
+  const b64 = pem.replace("-----BEGIN PRIVATE KEY-----", "").replace("-----END PRIVATE KEY-----", "").replace(/\n/g, "");
   const bin = atob(b64);
   const buf = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
