@@ -1,36 +1,54 @@
-import { initializeApp, cert } from 'firebase-admin/app'
-import { getFirestore } from 'firebase-admin/firestore'
+import { getFirestore } from './firebase.js'
 
-let firebaseApp
-let db
+const BLOCKED_ISPS = ['FPT Telecom', 'Viettel Group', 'VNPT'];
+const BLOCKED_IPS = ['123.45.67.89'];
+const DAILY_LIMIT = 5;
+const TIMEZONE_OFFSET = 7 * 60 * 60 * 1000; // UTC+7 (Vietnam Time)
+
+function getToday8AMTimestampVN() {
+  const now = new Date();
+  const utcNow = now.getTime();
+  const vnNow = new Date(utcNow + TIMEZONE_OFFSET);
+  vnNow.setUTCHours(1, 0, 0, 0); // 8AM VN = 1AM UTC
+  return vnNow.getTime();
+}
 
 export default {
   async fetch(request, env, ctx) {
-    if (!firebaseApp) {
-      const serviceAccount = JSON.parse(env.FIREBASE_SERVICE_ACCOUNT)
-      firebaseApp = initializeApp({
-        credential: cert(serviceAccount)
-      })
-      db = getFirestore()
+    const ip = request.headers.get("cf-connecting-ip") || "unknown";
+    const isp = request.headers.get("cf-isp") || "unknown";
+    const country = request.headers.get("cf-ipcountry") || "unknown";
+
+    if (BLOCKED_IPS.includes(ip)) {
+      return new Response("Access denied (IP blocked)", { status: 403 });
     }
 
-    const url = new URL(request.url)
-    const userId = url.searchParams.get('userId') || 'unknown'
-
-    const usageRef = db.collection('usage_limits').doc(userId)
-    const usageSnap = await usageRef.get()
-
-    let count = 0
-    if (usageSnap.exists) {
-      count = usageSnap.data().count || 0
+    if (BLOCKED_ISPS.some(bad => isp.includes(bad))) {
+      return new Response("Access denied (ISP blocked)", { status: 403 });
     }
 
-    if (count >= 5) {
-      return new Response('Hết lượt sử dụng!', { status: 403 })
+    const db = getFirestore(env);
+    const ref = db.collection('usage').doc(ip);
+    const snap = await ref.get();
+    const data = snap.exists ? snap.data() : {};
+
+    const todayReset = getToday8AMTimestampVN();
+
+    let { count = 0, lastReset = 0 } = data;
+
+    if (lastReset < todayReset) {
+      count = 0;
+      lastReset = todayReset;
     }
 
-    await usageRef.set({ count: count + 1 }, { merge: true })
+    if (count >= DAILY_LIMIT) {
+      return new Response("Rate limit exceeded (5 requests per day)", { status: 429 });
+    }
 
-    return new Response(`Lượt sử dụng hiện tại: ${count + 1}`)
+    await ref.set({ count: count + 1, lastReset, isp, country }, { merge: true });
+
+    return new Response(`OK | IP: ${ip}, ISP: ${isp}, Count: ${count + 1}/5`, {
+      headers: { 'content-type': 'text/plain' }
+    });
   }
 }
