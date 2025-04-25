@@ -1,3 +1,0 @@
-name = "cloudflare-firebase-limit"
-main = "worker.js"
-compatibility_date = "2025-04-25"
