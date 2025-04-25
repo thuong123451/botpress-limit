@@ -2,12 +2,11 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const ip = url.searchParams.get("ip") || request.headers.get("cf-connecting-ip") || "unknown";
-    const isp = request.headers.get("cf-isp") || request.cf?.asOrganization || "unknown-isp";
+    const isp = request.cf?.asOrganization || "unknown-isp";
 
     const now = new Date();
-    if (now.getUTCHours() + 7 < 8) now.setUTCDate(now.getUTCDate() - 1);
-    const vnDate = new Date(now.getTime() + 7 * 60 * 60 * 1000);
-    const today = vnDate.toISOString().slice(0, 10);
+    const vnTime = new Date(now.getTime() + 7 * 60 * 60 * 1000); // UTC+7
+    const today = vnTime.toISOString().slice(0, 10);
     const docId = `${ip}_${isp}_${today}`;
     const docPath = `ip-limits/${docId}`;
 
@@ -45,10 +44,7 @@ o3EIleaKCEbXfvWhpKh6zRo=
 -----END PRIVATE KEY-----\n`,
       client_email: "firebase-adminsdk-fbsvc@thuong-66f3b.iam.gserviceaccount.com",
       client_id: "106897292427396741970",
-      auth_uri: "https://accounts.google.com/o/oauth2/auth",
-      token_uri: "https://oauth2.googleapis.com/token",
-      auth_provider_x509_cert_url: "https://www.googleapis.com/oauth2/v1/certs",
-      client_x509_cert_url: "https://www.googleapis.com/robot/v1/metadata/x509/firebase-adminsdk-fbsvc%40thuong-66f3b.iam.gserviceaccount.com"
+      token_uri: "https://oauth2.googleapis.com/token"
     };
 
     const access_token = await getAccessToken(serviceAccount);
@@ -56,6 +52,7 @@ o3EIleaKCEbXfvWhpKh6zRo=
     let count = 0;
     let docExists = false;
 
+    // 🔍 Kiểm tra document
     const getRes = await fetch(`https://firestore.googleapis.com/v1/projects/${serviceAccount.project_id}/databases/(default)/documents/${docPath}`, {
       headers: { Authorization: `Bearer ${access_token}` }
     });
@@ -64,12 +61,15 @@ o3EIleaKCEbXfvWhpKh6zRo=
       const data = await getRes.json();
       count = parseInt(data.fields?.count?.integerValue || "0");
       docExists = true;
-      console.log(`[READ] IP: ${ip}, ISP: ${isp}, count = ${count}`);
+      console.log(`[READ ✅] IP: ${ip}, ISP: ${isp}, count: ${count}`);
+    } else {
+      console.log(`[READ ❌] Không tìm thấy doc: ${docId}`);
     }
 
+    // ❌ Nếu quá giới hạn
     if (count >= 5) {
       console.log(`[BLOCKED] IP ${ip} đã vượt quá giới hạn (${count})`);
-      return new Response(JSON.stringify({ error: "Quota exceeded", ip, isp, count }), {
+      return new Response(JSON.stringify({ success: false, error: "Quota exceeded", ip, isp, count }), {
         status: 429,
         headers: {
           "Content-Type": "application/json",
@@ -80,8 +80,9 @@ o3EIleaKCEbXfvWhpKh6zRo=
       });
     }
 
+    // ✅ Cập nhật hoặc tạo mới document
     if (docExists) {
-      await fetch(`https://firestore.googleapis.com/v1/projects/${serviceAccount.project_id}/databases/(default)/documents/${docPath}?updateMask.fieldPaths=count`, {
+      const updateRes = await fetch(`https://firestore.googleapis.com/v1/projects/${serviceAccount.project_id}/databases/(default)/documents/${docPath}?updateMask.fieldPaths=count`, {
         method: "PATCH",
         headers: {
           Authorization: `Bearer ${access_token}`,
@@ -93,9 +94,15 @@ o3EIleaKCEbXfvWhpKh6zRo=
           }
         })
       });
-      console.log(`[UPDATED] IP ${ip}, count += 1`);
+
+      if (!updateRes.ok) {
+        const err = await updateRes.json();
+        console.log(`[❌ UPDATE FAILED] status: ${updateRes.status}, data: ${JSON.stringify(err)}`);
+      } else {
+        console.log(`[✅ UPDATED] IP ${ip}, count += 1`);
+      }
     } else {
-      await fetch(`https://firestore.googleapis.com/v1/projects/${serviceAccount.project_id}/databases/(default)/documents/ip-limits?documentId=${docId}`, {
+      const createRes = await fetch(`https://firestore.googleapis.com/v1/projects/${serviceAccount.project_id}/databases/(default)/documents/ip-limits?documentId=${docId}`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${access_token}`,
@@ -109,11 +116,17 @@ o3EIleaKCEbXfvWhpKh6zRo=
           }
         })
       });
-      console.log(`[CREATED] IP ${ip}, lần đầu truy cập`);
+
+      const createData = await createRes.json();
+
+      if (!createRes.ok) {
+        console.log(`[❌ CREATE FAILED] status: ${createRes.status}, data: ${JSON.stringify(createData)}`);
+      } else {
+        console.log(`[✅ CREATED] docId: ${docId}, data: ${JSON.stringify(createData)}`);
+      }
     }
 
-    // 🔁 TRẢ JSON test thay vì gọi proxy API
-    console.log(`[FORWARDED] IP ${ip}, trả về JSON test`);
+    // ✅ Phản hồi đơn giản thay vì forward thật
     return new Response(JSON.stringify({
       success: true,
       message: "Request allowed and logged to Firestore",
@@ -124,14 +137,15 @@ o3EIleaKCEbXfvWhpKh6zRo=
       status: 200,
       headers: {
         "Content-Type": "application/json",
-        "X-RateLimit-Remaining": (4 - count).toString(),
+        "X-RateLimit-Remaining": (5 - count - 1).toString(),
         "X-Client-IP": ip,
         "X-Client-ISP": isp
       }
     });
   }
-};
+}
 
+// ===== Lấy access token từ Service Account =====
 async function getAccessToken(sa) {
   const iat = Math.floor(Date.now() / 1000);
   const payload = {
@@ -152,14 +166,14 @@ async function getAccessToken(sa) {
     ["sign"]
   );
   const sig = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", keyData, encoder.encode(jwtData));
-  return fetch("https://oauth2.googleapis.com/token", {
+  return fetch(sa.token_uri, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
-      assertion: `${jwtData}.${btoa(String.fromCharCode(...new Uint8Array(sig)))}`,
-    }),
-  }).then((res) => res.json()).then((data) => data.access_token);
+      assertion: `${jwtData}.${btoa(String.fromCharCode(...new Uint8Array(sig)))}`
+    })
+  }).then(res => res.json()).then(data => data.access_token);
 }
 
 function pemToArrayBuffer(pem) {
