@@ -1,9 +1,9 @@
-name = "cf-worker-limit-ip"
+name = "ip-limit-worker"
 main = "index.js"
 compatibility_date = "2024-04-25"
-account_id = "227697b81cbfcd72157a6c5ee34aa19b"
 
-compatibility_flags = ["nodejs_compat"]
+# Nếu bạn dùng Node.js API như `Buffer`, nên bật module:
+node_compat = true
 
-[vars]
-FIREBASE_KEY_BASE64 = "ewogICJ0eXBlIjogInNlcnZpY2VfYWNjb3VudCIsCiAgInByb2plY3RfaWQiOiAidGh1b25nLTY2ZjNiIiwKICAicHJpdmF0ZV9rZXlfaWQiOiAiNjk1YzA0YzJkNmI2MzhiNzdlMGRjZDEzNmY5YjUzMmUwMDQ5N2VmNyIsCiAgInByaXZhdGVfa2V5IjogIi0tLS0tLUJFR0lOIFBSSVZBVEUgS0VZLS0tLS0tXG5NSUlFd..."
+# Loại bỏ field `type` vì Wrangler cảnh báo "Unexpected fields"
+# Không cần [assets] nếu bạn không phục vụ file tĩnh từ thư mục
