@@ -1,4 +1,7 @@
 name = "botpress-limit"
-main = "index.js"
-compatibility_date = "2024-04-25"
-node_compat = true
+type = "javascript"
+main = "src/index.js"
+compatibility_date = "2025-04-25"
+
+[build]
+upload.format = "modules"
