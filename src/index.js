@@ -1,69 +1,36 @@
-const FIREBASE_URL = 'https://firestore.googleapis.com/v1/projects/YOUR_PROJECT_ID/databases/(default)/documents'
-const LIMIT = 5
+import { initializeApp, cert } from 'firebase-admin/app'
+import { getFirestore } from 'firebase-admin/firestore'
+
+let firebaseApp
+let db
 
 export default {
   async fetch(request, env, ctx) {
+    if (!firebaseApp) {
+      const serviceAccount = JSON.parse(env.FIREBASE_SERVICE_ACCOUNT)
+      firebaseApp = initializeApp({
+        credential: cert(serviceAccount)
+      })
+      db = getFirestore()
+    }
+
     const url = new URL(request.url)
-    const ip = url.searchParams.get('ip') || 'unknown'
+    const userId = url.searchParams.get('userId') || 'unknown'
 
-    const now = new Date()
-    const currentHour = now.getUTCHours() + 7 // Giờ VN (UTC+7)
-    const resetTimestamp = new Date(now)
+    const usageRef = db.collection('usage_limits').doc(userId)
+    const usageSnap = await usageRef.get()
 
-    if (currentHour >= 8) {
-      resetTimestamp.setUTCHours(1)
-    } else {
-      resetTimestamp.setUTCHours(-23)
+    let count = 0
+    if (usageSnap.exists) {
+      count = usageSnap.data().count || 0
     }
 
-    resetTimestamp.setUTCMinutes(0)
-    resetTimestamp.setUTCSeconds(0)
-    resetTimestamp.setUTCMilliseconds(0)
-
-    const todayKey = resetTimestamp.toISOString().split('T')[0]
-    const docPath = `limits/${ip}`
-
-    const getRes = await fetch(`${FIREBASE_URL}/${docPath}`, {
-      headers: {
-        Authorization: `Bearer ${env.FIREBASE_TOKEN}`,
-      },
-    })
-
-    let data = {
-      fields: {
-        count: { integerValue: '0' },
-        todayKey: { stringValue: todayKey },
-      },
+    if (count >= 5) {
+      return new Response('Hết lượt sử dụng!', { status: 403 })
     }
 
-    if (getRes.ok) {
-      const json = await getRes.json()
-      const storedKey = json.fields?.todayKey?.stringValue || ''
-      const count = parseInt(json.fields?.count?.integerValue || '0', 10)
+    await usageRef.set({ count: count + 1 }, { merge: true })
 
-      if (storedKey === todayKey) {
-        if (count >= LIMIT) {
-          return new Response(JSON.stringify({ allowed: false }), {
-            headers: { 'Content-Type': 'application/json' },
-          })
-        }
-
-        data.fields.count.integerValue = `${count + 1}`
-      }
-    }
-
-    // Update document in Firestore
-    await fetch(`${FIREBASE_URL}/${docPath}?updateMask.fieldPaths=count&updateMask.fieldPaths=todayKey`, {
-      method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${env.FIREBASE_TOKEN}`,
-      },
-      body: JSON.stringify(data),
-    })
-
-    return new Response(JSON.stringify({ allowed: true }), {
-      headers: { 'Content-Type': 'application/json' },
-    })
-  },
+    return new Response(`Lượt sử dụng hiện tại: ${count + 1}`)
+  }
 }
