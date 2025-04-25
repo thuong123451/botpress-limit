@@ -5,7 +5,8 @@ export default {
     const now = new Date();
     if (now.getHours() < 8) now.setDate(now.getDate() - 1);
     const today = now.toISOString().slice(0, 10);
-    const docPath = `ip-limits/${ip}_${today}`;
+    const docId = `${ip}_${today}`;
+    const docPath = `ip-limits/${docId}`;
 
     const serviceAccount = {
       "type": "service_account",
@@ -47,70 +48,66 @@ o3EIleaKCEbXfvWhpKh6zRo=
       "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/firebase-adminsdk-fbsvc%40thuong-66f3b.iam.gserviceaccount.com"
     };
 
-    const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
-        assertion: await createJWT(serviceAccount)
-      })
-    });
-    const { access_token } = await tokenRes.json();
+    const access_token = await getAccessToken(serviceAccount);
 
-    const docUrl = `https://firestore.googleapis.com/v1/projects/${serviceAccount.project_id}/databases/(default)/documents/${docPath}`;
-    const getRes = await fetch(docUrl, {
+    let count = 0;
+    let docExists = false;
+    const getRes = await fetch(`https://firestore.googleapis.com/v1/projects/${serviceAccount.project_id}/databases/(default)/documents/${docPath}`, {
       headers: { Authorization: `Bearer ${access_token}` }
     });
 
-    let count = 0;
     if (getRes.ok) {
       const data = await getRes.json();
       count = parseInt(data.fields?.count?.integerValue || "0");
-    } else if (getRes.status === 404) {
-      // Document chưa tồn tại, tạo mới sau
-      count = 0;
-    } else {
-      return new Response("Error reading Firestore", { status: 500 });
+      docExists = true;
     }
 
     if (count >= 5) {
       return new Response("Quota exceeded", { status: 403 });
     }
 
-    const patchMethod = count === 0 ? "POST" : "PATCH";
-    const patchUrl = count === 0 ? 
-      `https://firestore.googleapis.com/v1/projects/${serviceAccount.project_id}/databases/(default)/documents/ip-limits?documentId=${ip}_${today}` 
-      : docUrl + "?updateMask.fieldPaths=count";
-
-    await fetch(patchUrl, {
-      method: patchMethod,
-      headers: {
-        Authorization: `Bearer ${access_token}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        fields: {
-          count: { integerValue: (count + 1).toString() }
-        }
-      })
-    });
+    if (docExists) {
+      // Update count
+      await fetch(`https://firestore.googleapis.com/v1/projects/${serviceAccount.project_id}/databases/(default)/documents/${docPath}?updateMask.fieldPaths=count`, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${access_token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          fields: { count: { integerValue: (count + 1).toString() } }
+        })
+      });
+    } else {
+      // Create new document
+      await fetch(`https://firestore.googleapis.com/v1/projects/${serviceAccount.project_id}/databases/(default)/documents/ip-limits?documentId=${docId}`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${access_token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          fields: { count: { integerValue: "1" } }
+        })
+      });
+    }
 
     return new Response("Allowed", { status: 200 });
   }
 };
 
-async function createJWT(sa) {
-  const header = {
-    alg: "RS256",
-    typ: "JWT"
-  };
-  const now = Math.floor(Date.now() / 1000);
+async function getAccessToken(sa) {
+  const iat = Math.floor(Date.now() / 1000);
   const payload = {
     iss: sa.client_email,
     scope: "https://www.googleapis.com/auth/datastore",
     aud: sa.token_uri,
-    exp: now + 3600,
-    iat: now
+    exp: iat + 3600,
+    iat
+  };
+  const header = {
+    alg: "RS256",
+    typ: "JWT"
   };
   const encoder = new TextEncoder();
   const jwtData = `${btoa(JSON.stringify(header))}.${btoa(JSON.stringify(payload))}`;
@@ -122,11 +119,18 @@ async function createJWT(sa) {
     ["sign"]
   );
   const sig = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", keyData, encoder.encode(jwtData));
-  return `${jwtData}.${btoa(String.fromCharCode(...new Uint8Array(sig)))}`;
+  return fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+      assertion: `${jwtData}.${btoa(String.fromCharCode(...new Uint8Array(sig)))}`
+    })
+  }).then(res => res.json()).then(data => data.access_token);
 }
 
 function pemToArrayBuffer(pem) {
-  const b64 = pem.replace("-----BEGIN PRIVATE KEY-----", "").replace("-----END PRIVATE KEY-----", "").replace(/\n/g, "");
+  const b64 = pem.replace(/-----[^-]+-----/g, "").replace(/\s+/g, "");
   const bin = atob(b64);
   const buf = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
