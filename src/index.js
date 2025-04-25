@@ -75,7 +75,9 @@ o3EIleaKCEbXfvWhpKh6zRo=
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          fields: { count: { integerValue: (count + 1).toString() } }
+          fields: {
+            count: { integerValue: (count + 1).toString() }
+          }
         })
       });
     } else {
@@ -87,7 +89,9 @@ o3EIleaKCEbXfvWhpKh6zRo=
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          fields: { count: { integerValue: "1" } }
+          fields: {
+            count: { integerValue: "1" }
+          }
         })
       });
     }
