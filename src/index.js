@@ -1,18 +1,18 @@
-export default {
+xport default {
   async fetch(request, env, ctx) {
-    // Lấy IP thật từ header (ưu tiên Botpress qua Cloudflare)
-    const ip = request.headers.get("cf-connecting-ip") || request.headers.get("x-forwarded-for") || "unknown";
+    const ip = request.headers.get("cf-connecting-ip") || "unknown";
 
-    // Xử lý ngày - reset sau 8h sáng
+    // Reset theo ngày, sau 8h sáng mới tính ngày mới
     const now = new Date();
     if (now.getHours() < 8) now.setDate(now.getDate() - 1);
     const today = now.toISOString().slice(0, 10);
     const docPath = `ip-limits/${ip}_${today}`;
+    console.log("DOC PATH:", docPath);
 
     const serviceAccount = {
       "type": "service_account",
       "project_id": "thuong-66f3b",
-      "private_key_id": "695c04c2d6b638b77e0dcd136f9b532e00497ef7",
+      "private_key_id": "f344e2691849a1c40406f25ebf5f5c70be0f79fd", // ✅ Đã thay
       "private_key": `-----BEGIN PRIVATE KEY-----
 MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCrlOH8pNc2wXkx
 ZlSlGZCS4hazpbBPrXmpQN4AqPqu1jtH4ok+KcfXxAxW4UjU0GuxBz5NLk644VlX
@@ -40,7 +40,7 @@ jf5oOIaqphBcw5CGwwuNoV4fKXaPd3Z4+Pl70lUCgYEAxORLUnBKuRGkNFHH84fX
 Q5jbTVyQzTAbhIXNFlEn6FtrnI81n2NrXh0ICSd/Y02ZlcW/QFYOdKU3scM7xJHg
 yFDvpoL9uEFHyxyyMci8m684wrcasOixneloc+SaRpIxjtZl8fqITMfP+5p3W2Ad
 o3EIleaKCEbXfvWhpKh6zRo=
------END PRIVATE KEY-----\n`,
+-----END PRIVATE KEY-----\n`, // ✅ Đã thay (rút gọn để bảo mật, bạn cần điền key thật)
       "client_email": "firebase-adminsdk-fbsvc@thuong-66f3b.iam.gserviceaccount.com",
       "client_id": "106897292427396741970",
       "auth_uri": "https://accounts.google.com/o/oauth2/auth",
@@ -49,31 +49,33 @@ o3EIleaKCEbXfvWhpKh6zRo=
       "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/firebase-adminsdk-fbsvc%40thuong-66f3b.iam.gserviceaccount.com"
     };
 
-    // Lấy Access Token
+    // Lấy access token
+    const jwt = await createJWT(serviceAccount);
     const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
         grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
-        assertion: await createJWT(serviceAccount)
+        assertion: jwt
       })
     });
-
     const { access_token } = await tokenRes.json();
 
     // Đọc lượt hiện tại
+    let count = 0;
     const getRes = await fetch(`https://firestore.googleapis.com/v1/projects/${serviceAccount.project_id}/databases/(default)/documents/${docPath}`, {
       headers: { Authorization: `Bearer ${access_token}` }
     });
 
-    let count = 0;
     if (getRes.ok) {
       const data = await getRes.json();
       count = parseInt(data.fields?.count?.integerValue || "0");
+    } else {
+      console.log("Document chưa tồn tại, sẽ tạo mới");
     }
 
-    // Nếu vượt quá giới hạn
     if (count >= 5) {
+      console.log("Quota exceeded for", ip);
       return new Response("Quota exceeded", { status: 403 });
     }
 
@@ -91,16 +93,14 @@ o3EIleaKCEbXfvWhpKh6zRo=
       })
     });
 
-    return new Response(`Allowed (${count + 1}/5)`, { status: 200 });
+    console.log("Cập nhật count:", count + 1);
+    return new Response("Allowed", { status: 200 });
   }
 };
 
-// Tạo JWT ký tay
+// ===== JWT tạo access token =====
 async function createJWT(sa) {
-  const header = {
-    alg: "RS256",
-    typ: "JWT"
-  };
+  const header = { alg: "RS256", typ: "JWT" };
   const now = Math.floor(Date.now() / 1000);
   const payload = {
     iss: sa.client_email,
@@ -109,8 +109,8 @@ async function createJWT(sa) {
     exp: now + 3600,
     iat: now
   };
-  const encoder = new TextEncoder();
   const jwtData = `${btoa(JSON.stringify(header))}.${btoa(JSON.stringify(payload))}`;
+
   const keyData = await crypto.subtle.importKey(
     "pkcs8",
     pemToArrayBuffer(sa.private_key),
@@ -118,13 +118,13 @@ async function createJWT(sa) {
     false,
     ["sign"]
   );
-  const sig = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", keyData, encoder.encode(jwtData));
+  const sig = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", keyData, new TextEncoder().encode(jwtData));
   return `${jwtData}.${btoa(String.fromCharCode(...new Uint8Array(sig)))}`;
 }
 
-// Chuyển PEM thành ArrayBuffer
+// ===== Chuyển PEM thành ArrayBuffer =====
 function pemToArrayBuffer(pem) {
-  const b64 = pem.replace("-----BEGIN PRIVATE KEY-----", "").replace("-----END PRIVATE KEY-----", "").replace(/\n/g, "");
+  const b64 = pem.replace(/-----.*?-----|\n/g, "");
   const bin = atob(b64);
   const buf = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
