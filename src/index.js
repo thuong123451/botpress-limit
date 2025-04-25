@@ -1,20 +1,66 @@
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
-    const ip = url.searchParams.get("ip") || request.headers.get("cf-connecting-ip") || "unknown";
     const isp = request.cf?.asOrganization || "unknown-isp";
 
     const now = new Date();
-    const vnTime = new Date(now.getTime() + 7 * 60 * 60 * 1000); // UTC+7
-    const today = vnTime.toISOString().slice(0, 10);
-    const docId = `${isp}_${today}`;
-    const docPath = `ip-limits/${docId}`;
+    const vnNow = new Date(now.getTime() + 7 * 60 * 60 * 1000); // UTC+7
+    const today = vnNow.toISOString().slice(0, 10); // yyyy-mm-dd
 
-    const serviceAccount = {
-      type: "service_account",
-      project_id: "thuong-66f3b",
-      private_key_id: "f344e2691849a1c40406f25ebf5f5c70be0f79fd",
-      private_key: `-----BEGIN PRIVATE KEY-----
+    const key = `${isp}_${today}`.replace(/\./g, "-"); // Firebase không cho dấu chấm
+    const dbUrl = `https://thuong-66f3b-default-rtdb.asia-southeast1.firebasedatabase.app/isp-limits/${key}.json`;
+
+    const token = await getAccessToken(); // Tạo từ Service Account
+
+    // Lấy dữ liệu hiện tại
+    const res = await fetch(`${dbUrl}?auth=${token}`);
+    const data = await res.json();
+    const count = data?.count || 0;
+
+    if (count >= 5) {
+      return new Response(JSON.stringify({ success: false, error: "Quota exceeded", isp, count }), {
+        status: 429,
+        headers: {
+          "Content-Type": "application/json",
+          "X-RateLimit-Remaining": "0",
+          "X-Client-ISP": isp
+        }
+      });
+    }
+
+    // Ghi lại dữ liệu mới
+    await fetch(`${dbUrl}?auth=${token}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        count: count + 1,
+        lastTime: Date.now()
+      })
+    });
+
+    return new Response(JSON.stringify({
+      success: true,
+      message: "Request allowed",
+      isp,
+      count: count + 1
+    }), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json",
+        "X-RateLimit-Remaining": (5 - count - 1).toString(),
+        "X-Client-ISP": isp
+      }
+    });
+  }
+};
+
+// 🛡️ Hàm tạo access_token từ Firebase Service Account
+async function getAccessToken() {
+  const serviceAccount = {
+    "type": "service_account",
+    "project_id": "thuong-66f3b",
+    "private_key_id": "xxx",
+    "private_key": `-----BEGIN PRIVATE KEY-----
 MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCrlOH8pNc2wXkx
 ZlSlGZCS4hazpbBPrXmpQN4AqPqu1jtH4ok+KcfXxAxW4UjU0GuxBz5NLk644VlX
 XXVdRDkqk3+QMcRF0HuGqR9fpOmkn6xmULJdVe5LWi4/j1iy9xoCA6Sd53OTHExM
@@ -42,111 +88,45 @@ Q5jbTVyQzTAbhIXNFlEn6FtrnI81n2NrXh0ICSd/Y02ZlcW/QFYOdKU3scM7xJHg
 yFDvpoL9uEFHyxyyMci8m684wrcasOixneloc+SaRpIxjtZl8fqITMfP+5p3W2Ad
 o3EIleaKCEbXfvWhpKh6zRo=
 -----END PRIVATE KEY-----\n`,
-      client_email: "firebase-adminsdk-fbsvc@thuong-66f3b.iam.gserviceaccount.com",
-      client_id: "106897292427396741970",
-      token_uri: "https://oauth2.googleapis.com/token"
-    };
-
-    const access_token = await getAccessToken(serviceAccount);
-
-    let count = 0;
-    let docExists = false;
-
-    const getRes = await fetch(`https://firestore.googleapis.com/v1/projects/${serviceAccount.project_id}/databases/(default)/documents/${docPath}`, {
-      headers: { Authorization: `Bearer ${access_token}` }
-    });
-
-    if (getRes.ok) {
-      const data = await getRes.json();
-      count = parseInt(data.fields?.count?.integerValue || "0");
-      docExists = true;
-    }
-
-    if (count >= 5) {
-      return new Response(JSON.stringify({ success: false, error: "Quota exceeded", ip, isp, count }), {
-        status: 429,
-        headers: {
-          "Content-Type": "application/json",
-          "X-RateLimit-Remaining": "0",
-          "X-Client-IP": ip,
-          "X-Client-ISP": isp
-        }
-      });
-    }
-
-    if (docExists) {
-      await fetch(`https://firestore.googleapis.com/v1/projects/${serviceAccount.project_id}/databases/(default)/documents/${docPath}?updateMask.fieldPaths=count`, {
-        method: "PATCH",
-        headers: {
-          Authorization: `Bearer ${access_token}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          fields: { count: { integerValue: (count + 1).toString() } }
-        })
-      });
-    } else {
-      await fetch(`https://firestore.googleapis.com/v1/projects/${serviceAccount.project_id}/databases/(default)/documents/ip-limits?documentId=${docId}`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${access_token}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          fields: {
-            count: { integerValue: "1" },
-            isp: { stringValue: isp }
-          }
-        })
-      });
-    }
-
-    return new Response(JSON.stringify({
-      success: true,
-      message: "Request allowed and logged to Firestore",
-      ip,
-      isp,
-      count: count + 1
-    }), {
-      status: 200,
-      headers: {
-        "Content-Type": "application/json",
-        "X-RateLimit-Remaining": (5 - count - 1).toString(),
-        "X-Client-IP": ip,
-        "X-Client-ISP": isp
-      }
-    });
-  }
-}
-
-async function getAccessToken(sa) {
-  const iat = Math.floor(Date.now() / 1000);
-  const payload = {
-    iss: sa.client_email,
-    scope: "https://www.googleapis.com/auth/datastore",
-    aud: sa.token_uri,
-    exp: iat + 3600,
-    iat
+    "client_email": "firebase-adminsdk-xxx@thuong-66f3b.iam.gserviceaccount.com",
+    "client_id": "xxx",
+    "token_uri": "https://oauth2.googleapis.com/token"
   };
+
+  const iat = Math.floor(Date.now() / 1000);
+  const exp = iat + 3600;
+
+  const payload = {
+    iss: serviceAccount.client_email,
+    scope: "https://www.googleapis.com/auth/firebase.database",
+    aud: serviceAccount.token_uri,
+    iat,
+    exp
+  };
+
   const header = { alg: "RS256", typ: "JWT" };
   const encoder = new TextEncoder();
   const jwtData = `${btoa(JSON.stringify(header))}.${btoa(JSON.stringify(payload))}`;
   const keyData = await crypto.subtle.importKey(
     "pkcs8",
-    pemToArrayBuffer(sa.private_key),
+    pemToArrayBuffer(serviceAccount.private_key),
     { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
     false,
     ["sign"]
   );
   const sig = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", keyData, encoder.encode(jwtData));
-  return fetch(sa.token_uri, {
+  const jwt = `${jwtData}.${btoa(String.fromCharCode(...new Uint8Array(sig)))}`;
+
+  const res = await fetch(serviceAccount.token_uri, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
-      assertion: `${jwtData}.${btoa(String.fromCharCode(...new Uint8Array(sig)))}`,
+      assertion: jwt
     })
-  }).then(res => res.json()).then(data => data.access_token);
+  });
+  const json = await res.json();
+  return json.access_token;
 }
 
 function pemToArrayBuffer(pem) {
