@@ -4,7 +4,6 @@ export default {
     const ip = url.searchParams.get("ip") || request.headers.get("cf-connecting-ip") || "unknown";
     const isp = request.headers.get("cf-isp") || "unknown-isp";
 
-    // Giờ Việt Nam
     const now = new Date();
     if (now.getUTCHours() + 7 < 8) now.setUTCDate(now.getUTCDate() - 1);
     const vnDate = new Date(now.getTime() + 7 * 60 * 60 * 1000);
@@ -12,10 +11,9 @@ export default {
     const docId = `${ip}_${isp}_${today}`;
     const docPath = `ip-limits/${docId}`;
 
-    // Service Account từ Firebase
     const serviceAccount = {
-      "type": "service_account",
-      "project_id": "thuong-66f3b",
+      type: "service_account",
+      project_id: "thuong-66f3b",
       "private_key_id": "f344e2691849a1c40406f25ebf5f5c70be0f79fd", // ✅ Đã thay
       "private_key": `-----BEGIN PRIVATE KEY-----
 MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCrlOH8pNc2wXkx
@@ -44,19 +42,20 @@ jf5oOIaqphBcw5CGwwuNoV4fKXaPd3Z4+Pl70lUCgYEAxORLUnBKuRGkNFHH84fX
 Q5jbTVyQzTAbhIXNFlEn6FtrnI81n2NrXh0ICSd/Y02ZlcW/QFYOdKU3scM7xJHg
 yFDvpoL9uEFHyxyyMci8m684wrcasOixneloc+SaRpIxjtZl8fqITMfP+5p3W2Ad
 o3EIleaKCEbXfvWhpKh6zRo=
------END PRIVATE KEY-----\n`, // <-- Rút gọn vì đã cung cấp bên trên
-      "client_email": "firebase-adminsdk-fbsvc@thuong-66f3b.iam.gserviceaccount.com",
-      "client_id": "106897292427396741970",
-      "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-      "token_uri": "https://oauth2.googleapis.com/token",
-      "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-      "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/firebase-adminsdk-fbsvc%40thuong-66f3b.iam.gserviceaccount.com"
+-----END PRIVATE KEY-----\n`,
+      client_email: "firebase-adminsdk-fbsvc@thuong-66f3b.iam.gserviceaccount.com",
+      client_id: "106897292427396741970",
+      auth_uri: "https://accounts.google.com/o/oauth2/auth",
+      token_uri: "https://oauth2.googleapis.com/token",
+      auth_provider_x509_cert_url: "https://www.googleapis.com/oauth2/v1/certs",
+      client_x509_cert_url: "https://www.googleapis.com/robot/v1/metadata/x509/firebase-adminsdk-fbsvc%40thuong-66f3b.iam.gserviceaccount.com"
     };
 
     const access_token = await getAccessToken(serviceAccount);
 
     let count = 0;
     let docExists = false;
+
     const getRes = await fetch(`https://firestore.googleapis.com/v1/projects/${serviceAccount.project_id}/databases/(default)/documents/${docPath}`, {
       headers: { Authorization: `Bearer ${access_token}` }
     });
@@ -65,18 +64,32 @@ o3EIleaKCEbXfvWhpKh6zRo=
       const data = await getRes.json();
       count = parseInt(data.fields?.count?.integerValue || "0");
       docExists = true;
+      console.log(`[LOG] Found IP: ${ip}, ISP: ${isp}, count = ${count}`);
+    } else {
+      console.log(`[LOG] New IP: ${ip}, ISP: ${isp}`);
     }
 
     if (count >= 5) {
+      console.warn(`[BLOCKED] IP ${ip} đã vượt giới hạn (${count})`);
       return new Response(JSON.stringify({ error: "Quota exceeded", ip, isp, count }), {
         status: 429,
         headers: {
           "Content-Type": "application/json",
+          "X-RateLimit-Remaining": "0",
           "X-Client-IP": ip,
-          "X-RateLimit-Remaining": "0"
+          "X-Client-ISP": isp
         }
       });
     }
+
+    const newCount = count + 1;
+    const saveBody = {
+      fields: {
+        count: { integerValue: newCount.toString() },
+        ip: { stringValue: ip },
+        isp: { stringValue: isp }
+      }
+    };
 
     if (docExists) {
       await fetch(`https://firestore.googleapis.com/v1/projects/${serviceAccount.project_id}/databases/(default)/documents/${docPath}?updateMask.fieldPaths=count`, {
@@ -85,12 +98,9 @@ o3EIleaKCEbXfvWhpKh6zRo=
           Authorization: `Bearer ${access_token}`,
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({
-          fields: {
-            count: { integerValue: (count + 1).toString() }
-          }
-        })
+        body: JSON.stringify({ fields: { count: { integerValue: newCount.toString() } } })
       });
+      console.log(`[UPDATED] IP ${ip}, count = ${newCount}`);
     } else {
       await fetch(`https://firestore.googleapis.com/v1/projects/${serviceAccount.project_id}/databases/(default)/documents/ip-limits?documentId=${docId}`, {
         method: "POST",
@@ -98,18 +108,12 @@ o3EIleaKCEbXfvWhpKh6zRo=
           Authorization: `Bearer ${access_token}`,
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({
-          fields: {
-            count: { integerValue: "1" },
-            ip: { stringValue: ip },
-            isp: { stringValue: isp }
-          }
-        })
+        body: JSON.stringify(saveBody)
       });
+      console.log(`[CREATED] IP ${ip}, count = 1`);
     }
 
-    // ✅ Nếu còn lượt → forward đến API gốc
-    const proxyUrl = "https://your-api.example.com/api/chat"; // ⚠️ Thay bằng API thật
+    const proxyUrl = "https://bots.botpress.cloud/6d624a64-d5c9-4d59-af65-b64133a7f727/webchat"; // ⚠️ thay URL thực tế
     const proxyRequest = new Request(proxyUrl, {
       method: request.method,
       headers: request.headers,
@@ -118,11 +122,13 @@ o3EIleaKCEbXfvWhpKh6zRo=
     });
 
     const response = await fetch(proxyRequest);
-
     const resHeaders = new Headers(response.headers);
-    resHeaders.set("X-RateLimit-Remaining", (4 - count).toString());
+
+    resHeaders.set("X-RateLimit-Remaining", (5 - newCount).toString());
     resHeaders.set("X-Client-IP", ip);
     resHeaders.set("X-Client-ISP", isp);
+
+    console.log(`[FORWARDED] IP ${ip}, trả kết quả, count = ${newCount}`);
 
     return new Response(response.body, {
       status: response.status,
@@ -131,6 +137,7 @@ o3EIleaKCEbXfvWhpKh6zRo=
   }
 };
 
+// ==== Access Token từ Firebase ====
 async function getAccessToken(sa) {
   const iat = Math.floor(Date.now() / 1000);
   const payload = {
@@ -156,9 +163,9 @@ async function getAccessToken(sa) {
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
-      assertion: `${jwtData}.${btoa(String.fromCharCode(...new Uint8Array(sig)))}`
-    })
-  }).then(res => res.json()).then(data => data.access_token);
+      assertion: `${jwtData}.${btoa(String.fromCharCode(...new Uint8Array(sig)))}`,
+    }),
+  }).then((res) => res.json()).then((data) => data.access_token);
 }
 
 function pemToArrayBuffer(pem) {
