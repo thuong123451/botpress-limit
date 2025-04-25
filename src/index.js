@@ -1,7 +1,13 @@
 export default {
   async fetch(request, env, ctx) {
     const ip = request.headers.get("cf-connecting-ip");
-    const today = new Date().toISOString().slice(0, 10);
+
+    // Xử lý ngày: Trước 8h sáng thì tính là ngày hôm trước
+    const now = new Date();
+    if (now.getHours() < 8) {
+      now.setDate(now.getDate() - 1);
+    }
+    const today = now.toISOString().slice(0, 10);
     const docPath = `ip-limits/${ip}_${today}`;
 
     const serviceAccount = {
@@ -57,7 +63,7 @@ o3EIleaKCEbXfvWhpKh6zRo=
 
     const { access_token } = await tokenRes.json();
 
-    // Kiểm tra lượt gọi
+    // Kiểm tra số lần đã gọi
     const getRes = await fetch(`https://firestore.googleapis.com/v1/projects/${serviceAccount.project_id}/databases/(default)/documents/${docPath}`, {
       headers: { Authorization: `Bearer ${access_token}` }
     });
@@ -65,14 +71,15 @@ o3EIleaKCEbXfvWhpKh6zRo=
     let count = 0;
     if (getRes.ok) {
       const data = await getRes.json();
-      count = parseInt(data.fields.count.integerValue || "0");
+      count = parseInt(data.fields?.count?.integerValue || "0");
     }
 
+    // Nếu quá 5 lượt thì trả về 403 (chặn luôn)
     if (count >= 5) {
-      return new Response("Bạn đã vượt quá giới hạn sử dụng trong ngày.", { status: 429 });
+      return new Response(null, { status: 403 });
     }
 
-    // Ghi lại lượt mới
+    // Ghi tăng số lượt lên
     await fetch(`https://firestore.googleapis.com/v1/projects/${serviceAccount.project_id}/databases/(default)/documents/${docPath}?updateMask.fieldPaths=count`, {
       method: "PATCH",
       headers: {
@@ -86,11 +93,12 @@ o3EIleaKCEbXfvWhpKh6zRo=
       })
     });
 
-    return new Response(`Chào! Đây là lần truy cập thứ ${count + 1} trong ngày của bạn.`);
+    // Trả về thành công (không cần text)
+    return new Response(null, { status: 200 });
   }
 };
 
-// Tạo JWT để lấy access_token
+// Hàm tạo JWT
 async function createJWT(sa) {
   const header = {
     alg: "RS256",
@@ -120,7 +128,7 @@ async function createJWT(sa) {
   return `${jwtData}.${btoa(String.fromCharCode(...new Uint8Array(sig)))}`;
 }
 
-// Chuyển PEM sang ArrayBuffer
+// Chuyển PEM thành ArrayBuffer
 function pemToArrayBuffer(pem) {
   const b64 = pem
     .replace("-----BEGIN PRIVATE KEY-----", "")
