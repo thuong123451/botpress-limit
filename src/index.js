@@ -1,5 +1,21 @@
-const FIREBASE_PROJECT_ID = '"thuong-66f3b"';
-const FIREBASE_API_KEY = `-----BEGIN PRIVATE KEY-----
+export default {
+  async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+    const ip = url.searchParams.get("ip") || request.headers.get("cf-connecting-ip") || "unknown";
+    const isp = request.headers.get("cf-isp") || request.cf?.asOrganization || "unknown-isp";
+
+    const now = new Date();
+    if (now.getUTCHours() + 7 < 8) now.setUTCDate(now.getUTCDate() - 1);
+    const vnDate = new Date(now.getTime() + 7 * 60 * 60 * 1000);
+    const today = vnDate.toISOString().slice(0, 10);
+    const docId = `${ip}_${isp}_${today}`;
+    const docPath = `ip-limits/${docId}`;
+
+    const serviceAccount = {
+      type: "service_account",
+      project_id: "thuong-66f3b",
+      private_key_id: "f344e2691849a1c40406f25ebf5f5c70be0f79fd",
+      private_key: `-----BEGIN PRIVATE KEY-----
 MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCrlOH8pNc2wXkx
 ZlSlGZCS4hazpbBPrXmpQN4AqPqu1jtH4ok+KcfXxAxW4UjU0GuxBz5NLk644VlX
 XXVdRDkqk3+QMcRF0HuGqR9fpOmkn6xmULJdVe5LWi4/j1iy9xoCA6Sd53OTHExM
@@ -26,79 +42,130 @@ jf5oOIaqphBcw5CGwwuNoV4fKXaPd3Z4+Pl70lUCgYEAxORLUnBKuRGkNFHH84fX
 Q5jbTVyQzTAbhIXNFlEn6FtrnI81n2NrXh0ICSd/Y02ZlcW/QFYOdKU3scM7xJHg
 yFDvpoL9uEFHyxyyMci8m684wrcasOixneloc+SaRpIxjtZl8fqITMfP+5p3W2Ad
 o3EIleaKCEbXfvWhpKh6zRo=
------END PRIVATE KEY-----\n`;
-const FIRESTORE_URL = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents`;
-
-const DAILY_LIMIT = 5; // ⚡ Số lượt cho phép mỗi IP/ISP mỗi ngày
-
-function getTodayDateString() {
-  const now = new Date();
-  return now.toISOString().split('T')[0];
-}
-
-async function handleRequest(request) {
-  const { searchParams } = new URL(request.url);
-
-  const ip = searchParams.get('ip') || request.headers.get('CF-Connecting-IP') || 'unknown';
-  const cf = request.cf || {}; // Cloudflare header
-  const isp = cf.asOrganization || 'Unknown-ISP';
-
-  const today = getTodayDateString();
-  const id = `${ip}_${isp.replace(/\s+/g, '_')}`; // Tạo ID: IP_ISP
-
-  console.log(`Checking IP: ${ip}, ISP: ${isp}`);
-
-  const docPath = `ip-limits/${encodeURIComponent(id)}`;
-
-  try {
-    // Fetch existing document
-    const getRes = await fetch(`${FIRESTORE_URL}/${docPath}?key=${FIREBASE_API_KEY}`);
-    let data = {};
-    if (getRes.ok) {
-      data = await getRes.json();
-    } else {
-      console.log('First time seen:', id);
-    }
-
-    const fields = data.fields || {};
-    const lastVisitDate = fields.lastDate?.stringValue || '';
-    let count = fields.count?.integerValue ? parseInt(fields.count.integerValue) : 0;
-
-    if (lastVisitDate !== today) {
-      count = 0;
-    }
-
-    if (count >= DAILY_LIMIT) {
-      console.log(`IP+ISP ${id} exceeded limit`);
-      return new Response('You have reached your daily limit.', { status: 429 });
-    }
-
-    // Update count
-    const patchBody = {
-      fields: {
-        count: { integerValue: count + 1 },
-        lastDate: { stringValue: today },
-        ip: { stringValue: ip },
-        isp: { stringValue: isp }
-      }
+-----END PRIVATE KEY-----\n`,
+      client_email: "firebase-adminsdk-fbsvc@thuong-66f3b.iam.gserviceaccount.com",
+      client_id: "106897292427396741970",
+      auth_uri: "https://accounts.google.com/o/oauth2/auth",
+      token_uri: "https://oauth2.googleapis.com/token",
+      auth_provider_x509_cert_url: "https://www.googleapis.com/oauth2/v1/certs",
+      client_x509_cert_url: "https://www.googleapis.com/robot/v1/metadata/x509/firebase-adminsdk-fbsvc%40thuong-66f3b.iam.gserviceaccount.com"
     };
 
-    const patchRes = await fetch(`${FIRESTORE_URL}/${docPath}?key=${FIREBASE_API_KEY}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(patchBody)
+    const access_token = await getAccessToken(serviceAccount);
+
+    let count = 0;
+    let docExists = false;
+
+    const getRes = await fetch(`https://firestore.googleapis.com/v1/projects/${serviceAccount.project_id}/databases/(default)/documents/${docPath}`, {
+      headers: { Authorization: `Bearer ${access_token}` }
     });
 
-    const patchResult = await patchRes.json();
-    console.log('Updated Firestore:', patchResult);
+    if (getRes.ok) {
+      const data = await getRes.json();
+      count = parseInt(data.fields?.count?.integerValue || "0");
+      docExists = true;
+      console.log(`[READ] IP: ${ip}, ISP: ${isp}, count = ${count}`);
+    }
 
-    return new Response(`Request accepted. (${count + 1}/${DAILY_LIMIT})`);
-  } catch (error) {
-    console.log('Error:', error.message);
-    return new Response('Server error', { status: 500 });
+    if (count >= 5) {
+      console.log(`[BLOCKED] IP ${ip} đã vượt quá giới hạn (${count})`);
+      return new Response(JSON.stringify({ error: "Quota exceeded", ip, isp, count }), {
+        status: 429,
+        headers: {
+          "Content-Type": "application/json",
+          "X-RateLimit-Remaining": "0",
+          "X-Client-IP": ip,
+          "X-Client-ISP": isp
+        }
+      });
+    }
+
+    if (docExists) {
+      await fetch(`https://firestore.googleapis.com/v1/projects/${serviceAccount.project_id}/databases/(default)/documents/${docPath}?updateMask.fieldPaths=count`, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${access_token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          fields: {
+            count: { integerValue: (count + 1).toString() }
+          }
+        })
+      });
+      console.log(`[UPDATED] IP ${ip}, count += 1`);
+    } else {
+      await fetch(`https://firestore.googleapis.com/v1/projects/${serviceAccount.project_id}/databases/(default)/documents/ip-limits?documentId=${docId}`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${access_token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          fields: {
+            count: { integerValue: "1" },
+            ip: { stringValue: ip },
+            isp: { stringValue: isp }
+          }
+        })
+      });
+      console.log(`[CREATED] IP ${ip}, lần đầu truy cập`);
+    }
+
+    // 🔁 TRẢ JSON test thay vì gọi proxy API
+    console.log(`[FORWARDED] IP ${ip}, trả về JSON test`);
+    return new Response(JSON.stringify({
+      success: true,
+      message: "Request allowed and logged to Firestore",
+      ip,
+      isp,
+      count: count + 1
+    }), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json",
+        "X-RateLimit-Remaining": (4 - count).toString(),
+        "X-Client-IP": ip,
+        "X-Client-ISP": isp
+      }
+    });
   }
+};
+
+async function getAccessToken(sa) {
+  const iat = Math.floor(Date.now() / 1000);
+  const payload = {
+    iss: sa.client_email,
+    scope: "https://www.googleapis.com/auth/datastore",
+    aud: sa.token_uri,
+    exp: iat + 3600,
+    iat
+  };
+  const header = { alg: "RS256", typ: "JWT" };
+  const encoder = new TextEncoder();
+  const jwtData = `${btoa(JSON.stringify(header))}.${btoa(JSON.stringify(payload))}`;
+  const keyData = await crypto.subtle.importKey(
+    "pkcs8",
+    pemToArrayBuffer(sa.private_key),
+    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const sig = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", keyData, encoder.encode(jwtData));
+  return fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+      assertion: `${jwtData}.${btoa(String.fromCharCode(...new Uint8Array(sig)))}`,
+    }),
+  }).then((res) => res.json()).then((data) => data.access_token);
 }
 
-addEventListener('fetch', event => {
-  event.respondWith(handleRequest(event.request));
-});
+function pemToArrayBuffer(pem) {
+  const b64 = pem.replace(/-----[^-]+-----/g, "").replace(/\s+/g, "");
+  const bin = atob(b64);
+  const buf = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+  return buf.buffer;
+}
