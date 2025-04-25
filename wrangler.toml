@@ -1,11 +1,11 @@
 name = "cf-worker-limit-ip"
-type = "javascript"
 
 account_id = "227697b81cbfcd72157a6c5ee34aa19b"
 workers_dev = true
 compatibility_date = "2024-04-25"
 
-# Cho phép dùng các module Node.js như buffer
+main = "index.js"
+
 compatibility_flags = ["nodejs_compat"]
 
 [vars]
