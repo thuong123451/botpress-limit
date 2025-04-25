@@ -7,7 +7,7 @@ export default {
     const now = new Date();
     const vnTime = new Date(now.getTime() + 7 * 60 * 60 * 1000); // UTC+7
     const today = vnTime.toISOString().slice(0, 10);
-    const docId = `${ip}_${isp}_${today}`;
+    const docId = `${isp}_${today}`;
     const docPath = `ip-limits/${docId}`;
 
     const serviceAccount = {
@@ -52,7 +52,6 @@ o3EIleaKCEbXfvWhpKh6zRo=
     let count = 0;
     let docExists = false;
 
-    // 🔍 Kiểm tra document
     const getRes = await fetch(`https://firestore.googleapis.com/v1/projects/${serviceAccount.project_id}/databases/(default)/documents/${docPath}`, {
       headers: { Authorization: `Bearer ${access_token}` }
     });
@@ -61,14 +60,9 @@ o3EIleaKCEbXfvWhpKh6zRo=
       const data = await getRes.json();
       count = parseInt(data.fields?.count?.integerValue || "0");
       docExists = true;
-      console.log(`[READ ✅] IP: ${ip}, ISP: ${isp}, count: ${count}`);
-    } else {
-      console.log(`[READ ❌] Không tìm thấy doc: ${docId}`);
     }
 
-    // ❌ Nếu quá giới hạn
     if (count >= 5) {
-      console.log(`[BLOCKED] IP ${ip} đã vượt quá giới hạn (${count})`);
       return new Response(JSON.stringify({ success: false, error: "Quota exceeded", ip, isp, count }), {
         status: 429,
         headers: {
@@ -80,29 +74,19 @@ o3EIleaKCEbXfvWhpKh6zRo=
       });
     }
 
-    // ✅ Cập nhật hoặc tạo mới document
     if (docExists) {
-      const updateRes = await fetch(`https://firestore.googleapis.com/v1/projects/${serviceAccount.project_id}/databases/(default)/documents/${docPath}?updateMask.fieldPaths=count`, {
+      await fetch(`https://firestore.googleapis.com/v1/projects/${serviceAccount.project_id}/databases/(default)/documents/${docPath}?updateMask.fieldPaths=count`, {
         method: "PATCH",
         headers: {
           Authorization: `Bearer ${access_token}`,
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          fields: {
-            count: { integerValue: (count + 1).toString() }
-          }
+          fields: { count: { integerValue: (count + 1).toString() } }
         })
       });
-
-      if (!updateRes.ok) {
-        const err = await updateRes.json();
-        console.log(`[❌ UPDATE FAILED] status: ${updateRes.status}, data: ${JSON.stringify(err)}`);
-      } else {
-        console.log(`[✅ UPDATED] IP ${ip}, count += 1`);
-      }
     } else {
-      const createRes = await fetch(`https://firestore.googleapis.com/v1/projects/${serviceAccount.project_id}/databases/(default)/documents/ip-limits?documentId=${docId}`, {
+      await fetch(`https://firestore.googleapis.com/v1/projects/${serviceAccount.project_id}/databases/(default)/documents/ip-limits?documentId=${docId}`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${access_token}`,
@@ -111,22 +95,12 @@ o3EIleaKCEbXfvWhpKh6zRo=
         body: JSON.stringify({
           fields: {
             count: { integerValue: "1" },
-            ip: { stringValue: ip },
             isp: { stringValue: isp }
           }
         })
       });
-
-      const createData = await createRes.json();
-
-      if (!createRes.ok) {
-        console.log(`[❌ CREATE FAILED] status: ${createRes.status}, data: ${JSON.stringify(createData)}`);
-      } else {
-        console.log(`[✅ CREATED] docId: ${docId}, data: ${JSON.stringify(createData)}`);
-      }
     }
 
-    // ✅ Phản hồi đơn giản thay vì forward thật
     return new Response(JSON.stringify({
       success: true,
       message: "Request allowed and logged to Firestore",
@@ -145,7 +119,6 @@ o3EIleaKCEbXfvWhpKh6zRo=
   }
 }
 
-// ===== Lấy access token từ Service Account =====
 async function getAccessToken(sa) {
   const iat = Math.floor(Date.now() / 1000);
   const payload = {
@@ -171,7 +144,7 @@ async function getAccessToken(sa) {
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
-      assertion: `${jwtData}.${btoa(String.fromCharCode(...new Uint8Array(sig)))}`
+      assertion: `${jwtData}.${btoa(String.fromCharCode(...new Uint8Array(sig)))}`,
     })
   }).then(res => res.json()).then(data => data.access_token);
 }
