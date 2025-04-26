@@ -1,5 +1,19 @@
 export default {
   async fetch(request, env, ctx) {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+
+    // Xử lý preflight request (OPTIONS)
+    if (request.method === "OPTIONS") {
+      return new Response(null, {
+        status: 204,
+        headers: corsHeaders,
+      });
+    }
+
     const isp = request.cf?.asOrganization || "unknown-isp";
     const now = new Date(Date.now() + 7 * 60 * 60 * 1000); // UTC+7
     const today = now.toISOString().slice(0, 10); // yyyy-mm-dd
@@ -14,7 +28,6 @@ export default {
       const data = await res.json();
       count = data?.count || 0;
     } catch (err) {
-      // Nếu fetch lỗi, mặc định count = 0
       count = 0;
     }
 
@@ -30,9 +43,10 @@ export default {
       }), {
         status: 429,
         headers: {
+          ...corsHeaders,
           "Content-Type": "application/json",
           "Cache-Control": "no-store, no-cache, must-revalidate",
-          "Pragma": "no-cache"
+          "Pragma": "no-cache",
         }
       });
     }
@@ -42,7 +56,7 @@ export default {
     await fetch(dbURL, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ count, lastTime: Date.now() })
+      body: JSON.stringify({ count, lastTime: Date.now() }),
     });
 
     return new Response(JSON.stringify({
@@ -52,9 +66,10 @@ export default {
       message: "Request allowed and logged"
     }), {
       headers: {
+        ...corsHeaders,
         "Content-Type": "application/json",
         "Cache-Control": "no-store, no-cache, must-revalidate",
-        "Pragma": "no-cache"
+        "Pragma": "no-cache",
       }
     });
   }
