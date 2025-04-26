@@ -1,54 +1,51 @@
 export default {
   async fetch(request, env, ctx) {
-    const isp = request.cf?.asOrganization || "unknown-isp";
-    
-    const now = new Date();
-    const vnTime = new Date(now.getTime() + 7 * 60 * 60 * 1000); // UTC+7
-    const today = vnTime.toISOString().slice(0, 10); // YYYY-MM-DD
+    const url = new URL(request.url);
+    const ip = url.searchParams.get("ip") || request.headers.get("cf-connecting-ip") || "unknown";
+    const isp = request.headers.get("cf-isp") || "unknown";
 
-    const key = `${isp.replace(/\./g, "_").replace(/\s+/g, "_")}_${today}`;
-    const dbUrl = `https://thuong-66f3b-default-rtdb.asia-southeast1.firebasedatabase.app/limits/${key}.json`;
+    const now = Date.now();
+    const today = new Date().toISOString().slice(0, 10); // yyyy-mm-dd
+    const key = `${isp}_${today}`;
+    const dbBaseURL = "https://thuong-66f3b-default-rtdb.asia-southeast1.firebasedatabase.app";
+    const dbURL = `${dbBaseURL}/isp-limits/${encodeURIComponent(key)}.json`;
 
-    // Get existing data
-    const getRes = await fetch(dbUrl);
-    let data = await getRes.json();
-    let count = data?.count || 0;
+    // 1. Fetch current count
+    let data = await fetch(dbURL).then(res => res.json()).catch(() => null);
+    let count = (data && data.count) || 0;
 
+    // 2. If over 5, block
     if (count >= 5) {
-      return new Response(JSON.stringify({ success: false, error: "Quota exceeded", isp, count }), {
-        status: 429,
-        headers: {
-          "Content-Type": "application/json",
-          "X-RateLimit-Remaining": "0",
-          "X-Client-ISP": isp
-        }
-      });
+      return new Response(JSON.stringify({
+        success: false,
+        message: `Limit exceeded for ISP "${isp}"`,
+        ip, isp, count
+      }), { status: 429, headers: { "Content-Type": "application/json" } });
     }
 
-    // Update count in Realtime DB
-    const updated = {
-      isp,
-      count: count + 1
-    };
-
-    await fetch(dbUrl, {
+    // 3. Increase and save back
+    count++;
+    await fetch(dbURL, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(updated)
+      body: JSON.stringify({ count, lastTime: now })
     });
+
+    // 4. Clean old entries (>2 days)
+    const cleanupURL = `${dbBaseURL}/isp-limits.json`;
+    const allLogs = await fetch(cleanupURL).then(res => res.json()).catch(() => ({}));
+    const twoDaysAgo = Date.now() - 2 * 24 * 60 * 60 * 1000;
+
+    for (const [entryKey, entryValue] of Object.entries(allLogs || {})) {
+      if (entryValue.lastTime && entryValue.lastTime < twoDaysAgo) {
+        await fetch(`${dbBaseURL}/isp-limits/${encodeURIComponent(entryKey)}.json`, { method: "DELETE" });
+      }
+    }
 
     return new Response(JSON.stringify({
       success: true,
-      message: "Request allowed and logged to Realtime DB",
-      isp,
-      count: count + 1
-    }), {
-      status: 200,
-      headers: {
-        "Content-Type": "application/json",
-        "X-RateLimit-Remaining": (5 - count - 1).toString(),
-        "X-Client-ISP": isp
-      }
-    });
+      message: "Request allowed and logged",
+      ip, isp, count
+    }), { headers: { "Content-Type": "application/json" } });
   }
 }
