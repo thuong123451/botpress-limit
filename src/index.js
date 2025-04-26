@@ -1,25 +1,18 @@
 export default {
   async fetch(request, env, ctx) {
     const isp = request.cf?.asOrganization || "unknown-isp";
-
+    
     const now = new Date();
     const vnTime = new Date(now.getTime() + 7 * 60 * 60 * 1000); // UTC+7
-    const today = vnTime.toISOString().slice(0, 10);
-    const docKey = `${isp}_${today}`;
-    const dbUrl = `https://thuong-66f3b-default-rtdb.asia-southeast1.firebasedatabase.app/limits/${encodeURIComponent(docKey)}.json`;
+    const today = vnTime.toISOString().slice(0, 10); // YYYY-MM-DD
 
-    // Lấy dữ liệu hiện tại
-    let count = 0;
-    try {
-      const getRes = await fetch(dbUrl);
-      if (getRes.ok) {
-        const data = await getRes.json();
-        count = data?.count || 0;
-      }
-    } catch (e) {
-      // nếu lỗi, coi như lần đầu
-      count = 0;
-    }
+    const key = `${isp.replace(/\./g, "_").replace(/\s+/g, "_")}_${today}`;
+    const dbUrl = `https://thuong-66f3b-default-rtdb.asia-southeast1.firebasedatabase.app/limits/${key}.json`;
+
+    // Get existing data
+    const getRes = await fetch(dbUrl);
+    let data = await getRes.json();
+    let count = data?.count || 0;
 
     if (count >= 5) {
       return new Response(JSON.stringify({ success: false, error: "Quota exceeded", isp, count }), {
@@ -32,11 +25,16 @@ export default {
       });
     }
 
-    // Ghi log count mới
+    // Update count in Realtime DB
+    const updated = {
+      isp,
+      count: count + 1
+    };
+
     await fetch(dbUrl, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ isp, count: count + 1 })
+      body: JSON.stringify(updated)
     });
 
     return new Response(JSON.stringify({
@@ -53,4 +51,4 @@ export default {
       }
     });
   }
-};
+}
