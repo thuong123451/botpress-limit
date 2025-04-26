@@ -7,17 +7,26 @@ export default {
     const dbBaseURL = "https://thuong-66f3b-default-rtdb.asia-southeast1.firebasedatabase.app";
     const dbURL = `${dbBaseURL}/isp-limits/${encodeURIComponent(key)}.json`;
 
-    // Get existing count
-    const res = await fetch(dbURL);
-    const data = await res.json();
-    let count = data?.count || 0;
+    let count = 0;
 
-    if (count >= 5) {
+    try {
+      const res = await fetch(dbURL);
+      const data = await res.json();
+      count = data?.count || 0;
+    } catch (err) {
+      // Nếu fetch lỗi, mặc định count = 0
+      count = 0;
+    }
+
+    const limit = 5;
+    const allowed = count < limit;
+
+    if (!allowed) {
       return new Response(JSON.stringify({
-        success: false,
-        message: "Quota exceeded",
+        allowed: false,
+        count,
         isp,
-        count
+        message: "Quota exceeded"
       }), {
         status: 429,
         headers: {
@@ -28,7 +37,7 @@ export default {
       });
     }
 
-    // Update new count
+    // Nếu allowed, tăng count
     count++;
     await fetch(dbURL, {
       method: "PUT",
@@ -37,10 +46,10 @@ export default {
     });
 
     return new Response(JSON.stringify({
-      success: true,
-      message: "Request allowed and logged to Realtime DB",
+      allowed: true,
+      count,
       isp,
-      count
+      message: "Request allowed and logged"
     }), {
       headers: {
         "Content-Type": "application/json",
