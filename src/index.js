@@ -6,7 +6,6 @@ export default {
       "Access-Control-Allow-Headers": "Content-Type",
     };
 
-    // Xử lý preflight request (OPTIONS)
     if (request.method === "OPTIONS") {
       return new Response(null, {
         status: 204,
@@ -14,15 +13,37 @@ export default {
       });
     }
 
+    const dbBaseURL = "https://thuong-66f3b-default-rtdb.asia-southeast1.firebasedatabase.app";
+
+    // --- Bước 1: Auto xóa dữ liệu cũ hơn 2 ngày ---
+    try {
+      const limitsRes = await fetch(`${dbBaseURL}/isp-limits.json`);
+      const limitsData = await limitsRes.json();
+
+      const now = Date.now();
+      const twoDaysMs = 2 * 24 * 60 * 60 * 1000;
+
+      if (limitsData) {
+        for (const [key, value] of Object.entries(limitsData)) {
+          if (value?.lastTime && now - value.lastTime > twoDaysMs) {
+            await fetch(`${dbBaseURL}/isp-limits/${encodeURIComponent(key)}.json`, {
+              method: "DELETE",
+            });
+          }
+        }
+      }
+    } catch (err) {
+      console.error("Error cleaning old records:", err);
+    }
+    // --- End Auto clean ---
+
     const isp = request.cf?.asOrganization || "unknown-isp";
     const now = new Date(Date.now() + 7 * 60 * 60 * 1000); // UTC+7
     const today = now.toISOString().slice(0, 10); // yyyy-mm-dd
     const key = `${isp.replace(/\s+/g, "_")}_${today}`;
-    const dbBaseURL = "https://thuong-66f3b-default-rtdb.asia-southeast1.firebasedatabase.app";
     const dbURL = `${dbBaseURL}/isp-limits/${encodeURIComponent(key)}.json`;
 
     let count = 0;
-
     try {
       const res = await fetch(dbURL);
       const data = await res.json();
@@ -35,14 +56,13 @@ export default {
     const allowed = count < limit;
 
     if (!allowed) {
-      // Vẫn trả HTTP 200 OK, chỉ trả allowed: false
       return new Response(JSON.stringify({
         allowed: false,
         count,
         isp,
         message: "Quota exceeded"
       }), {
-        status: 200,  // <-- luôn 200 OK
+        status: 200,
         headers: {
           ...corsHeaders,
           "Content-Type": "application/json",
