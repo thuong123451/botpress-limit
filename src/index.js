@@ -35,13 +35,14 @@ export default {
     const allowed = count < limit;
 
     if (!allowed) {
+      // Vẫn trả HTTP 200 OK, chỉ trả allowed: false
       return new Response(JSON.stringify({
         allowed: false,
         count,
         isp,
         message: "Quota exceeded"
       }), {
-        status: 429,
+        status: 200,  // <-- luôn 200 OK
         headers: {
           ...corsHeaders,
           "Content-Type": "application/json",
@@ -65,6 +66,7 @@ export default {
       isp,
       message: "Request allowed and logged"
     }), {
+      status: 200,
       headers: {
         ...corsHeaders,
         "Content-Type": "application/json",
