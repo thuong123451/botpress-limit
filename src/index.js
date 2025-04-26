@@ -20,7 +20,11 @@ export default {
         count
       }), {
         status: 429,
-        headers: { "Content-Type": "application/json" }
+        headers: {
+          "Content-Type": "application/json",
+          "Cache-Control": "no-store, no-cache, must-revalidate",
+          "Pragma": "no-cache"
+        }
       });
     }
 
@@ -38,7 +42,11 @@ export default {
       isp,
       count
     }), {
-      headers: { "Content-Type": "application/json" }
+      headers: {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-store, no-cache, must-revalidate",
+        "Pragma": "no-cache"
+      }
     });
   }
 }
