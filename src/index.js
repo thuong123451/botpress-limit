@@ -60,8 +60,10 @@ o3EIleaKCEbXfvWhpKh6zRo=
       docExists = true;
     }
 
-    if (count >= 5) {
-      return new Response(JSON.stringify({ success: false, error: "Quota exceeded", isp, count }), {
+    const newCount = count + 1;
+
+    if (newCount > 5) {
+      return new Response(JSON.stringify({ success: false, error: "Quota exceeded", isp, count: newCount }), {
         status: 429,
         headers: {
           "Content-Type": "application/json",
@@ -79,7 +81,7 @@ o3EIleaKCEbXfvWhpKh6zRo=
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          fields: { count: { integerValue: (count + 1).toString() } }
+          fields: { count: { integerValue: newCount.toString() } }
         })
       });
     } else {
@@ -102,12 +104,12 @@ o3EIleaKCEbXfvWhpKh6zRo=
       success: true,
       message: "Request allowed and logged to Firestore",
       isp,
-      count: count + 1
+      count: newCount
     }), {
       status: 200,
       headers: {
         "Content-Type": "application/json",
-        "X-RateLimit-Remaining": (5 - count - 1).toString(),
+        "X-RateLimit-Remaining": (5 - newCount).toString(),
         "X-Client-ISP": isp
       }
     });
