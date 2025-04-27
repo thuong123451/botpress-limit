@@ -47,7 +47,11 @@ export default {
     try {
       const res = await fetch(dbURL);
       const data = await res.json();
-      count = data?.count || 0;
+
+      if (data) {
+        const lastDate = new Date(data.lastTime + 7 * 60 * 60 * 1000).toISOString().slice(0, 10);
+        count = (lastDate === today) ? (data.count || 0) : 0;
+      }
     } catch (err) {
       count = 0;
     }
