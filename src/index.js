@@ -37,12 +37,15 @@ export default {
     }
     // --- End Auto clean ---
 
-    const isp = request.cf?.asOrganization || "unknown-isp";
+    // --- Bước 2: Xử lý ISP + ngày ---
+    const rawISP = request.cf?.asOrganization || "unknown-isp";
+    const isp = rawISP.replace(/\s+/g, "_"); // Replace space thành _
     const now = new Date(Date.now() + 7 * 60 * 60 * 1000); // UTC+7
     const today = now.toISOString().slice(0, 10); // yyyy-mm-dd
-    const key = `${isp.replace(/\s+/g, "_")}_${today}`;
+    const key = `${isp}_${today}`;
     const dbURL = `${dbBaseURL}/isp-limits/${encodeURIComponent(key)}.json`;
 
+    // --- Bước 3: Đọc count ---
     let count = 0;
     try {
       const res = await fetch(dbURL);
@@ -59,11 +62,12 @@ export default {
     const limit = 5;
     const allowed = count < limit;
 
+    // --- Bước 4: Nếu vượt limit ---
     if (!allowed) {
       return new Response(JSON.stringify({
         allowed: false,
         count,
-        isp,
+        isp: rawISP,
         message: "Quota exceeded"
       }), {
         status: 200,
@@ -76,7 +80,7 @@ export default {
       });
     }
 
-    // Nếu allowed, tăng count
+    // --- Bước 5: Nếu được phép, tăng count ---
     count++;
     await fetch(dbURL, {
       method: "PUT",
@@ -87,7 +91,7 @@ export default {
     return new Response(JSON.stringify({
       allowed: true,
       count,
-      isp,
+      isp: rawISP,
       message: "Request allowed and logged"
     }), {
       status: 200,
