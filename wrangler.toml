@@ -1,4 +1,4 @@
-name = "ip-limit-worker"
+name = "botpress-limit"
 main = "src/index.js"
 compatibility_date = "2024-04-25"
 compatibility_flags = ["nodejs_compat"]
